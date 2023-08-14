@@ -134,15 +134,13 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
             raise ValueError("Model not found!")
         
         input_length = 500  # 使用過去500天的數據
+
+        # 使用最新的500天數據
+        start_index = len(scaled_data) - input_length - 1
         X = []
         y = []
 
-        total_data_points = len(scaled_data)
-        # 使用最新的數據，但只基於最新的50%來更新模型
-        training_data_points = int(0.5 * total_data_points)
-        start_index = total_data_points - training_data_points - input_length
-        
-        for i in range(start_index, start_index + training_data_points):
+        for i in range(start_index, len(scaled_data) - input_length):  # -input_length 是為了確保有足夠的數據進行訓練
             X.append(scaled_data[i:i+input_length, :])
             y.append(scaled_data[i+input_length, 3])  # 只預測下一天
 
@@ -151,7 +149,11 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         # 使用模型訓練
         train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-        model.fit(train_dataset, epochs=5)  # 這裡我們假設只訓練5個迭代
+        # 使用較低的學習率
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001)
+        model.compile(optimizer=optimizer, loss='mean_squared_error')
+
+        model.fit(train_dataset, epochs=200)  # 這裡我們假設只訓練200個迭代
 
     # 儲存模型
     model_path = os.path.join('saved_models/', ticker_symbol)
