@@ -1,7 +1,7 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dropout, Dense
+from tensorflow.keras.layers import GRU, Dropout, Dense
 from tensorflow.keras.models import load_model
 import yfinance as yf
 import pandas as pd
@@ -66,15 +66,15 @@ def build(scaled_data, ticker_symbol):
 
         # 建立模型
         model = Sequential()
-        model.add(LSTM(256, return_sequences=True, input_shape=(input_length, input_dim)))
+        model.add(GRU(256, return_sequences=True, input_shape=(input_length, input_dim)))
         model.add(Dropout(0.5))
 
-        num_layers = 5
+        num_layers = 10
         for _ in range(num_layers - 1):
-            model.add(LSTM(256, return_sequences=True))
+            model.add(GRU(256, return_sequences=True))
             model.add(Dropout(0.5))
 
-        model.add(LSTM(256))
+        model.add(GRU(256))
         model.add(Dropout(0.5))
         model.add(Dense(5))
 
@@ -88,7 +88,8 @@ def build(scaled_data, ticker_symbol):
         model.fit(train_dataset, epochs=50, validation_data=val_dataset)
 
     # 儲存模型
-    model.save('saved_models/' + ticker_symbol)
+    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
+    model.save(model_path)
 
 def predict(model, scaled_data, scaler):
     print("正在使用模型預測...")
@@ -138,7 +139,8 @@ def incremental_training(model, scaled_data, scaler, ticker_symbol):
         model.fit(train_dataset, epochs=5)  # 这里我们假设只训练5个迭代
 
     # 儲存模型
-    model.save('saved_models/' + ticker_symbol)
+    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
+    model.save(model_path)
 
 def main():
     strategy = tf.distribute.MirroredStrategy()
@@ -156,9 +158,8 @@ def main():
     else:
         print("建立新模型...")
         build(scaled_data, ticker_symbol)
-    input(model_path)
-    model = tf.keras.models.load_model('saved_models/' + ticker_symbol)
-
+    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
+    model = tf.keras.models.load_model(model_path)
     print("正在使用模型預測...")
     predictions = predict(model, scaled_data, scaler)
         
