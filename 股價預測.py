@@ -133,19 +133,16 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         else:
             raise ValueError("Model not found!")
         
-        total_days = len(scaled_data)
-        input_length = 500  # 使用過去500天的數據，這個參數您可能還需要根據您的模型需求進行調整
-        
-        # 確保input_length不超過總數據的50%
-        if input_length > total_days * 0.5:
-            input_length = int(total_days * 0.5)
-        
+        input_length = 500  # 使用過去500天的數據
         X = []
         y = []
 
-        # 使用所有可用的數據，但只基於最新的50%數據進行增量訓練
-        start_index = total_days - 2 * input_length
-        for i in range(start_index, start_index + input_length):
+        total_data_points = len(scaled_data)
+        # 使用最新的數據，但只基於最新的50%來更新模型
+        training_data_points = int(0.5 * total_data_points)
+        start_index = total_data_points - training_data_points - input_length
+        
+        for i in range(start_index, start_index + training_data_points):
             X.append(scaled_data[i:i+input_length, :])
             y.append(scaled_data[i+input_length, 3])  # 只預測下一天
 
@@ -188,7 +185,6 @@ def main():
     input("按Enter鍵開始增量訓練")
     incremental_training(scaled_data, scaler, ticker_symbol, strategy)
     input("增量訓練完成，按Enter鍵結束")
-
 
 if __name__ == "__main__":
     main()
