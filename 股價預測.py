@@ -123,6 +123,11 @@ def plot_predictions(ticker_symbol, df, predictions):
     plt.xlabel("Days")
     plt.ylabel("Predicted Price")
     plt.grid(True)
+    
+    # Annotate each point with its corresponding value
+    for i, txt in enumerate(figurelist):
+        plt.annotate(f"{txt:.2f}", (days[i], figurelist[i]), textcoords="offset points", xytext=(0,10), ha='center')
+    
     plt.show()
 
 def incremental_training(scaled_data, scaler, ticker_symbol, strategy): 
