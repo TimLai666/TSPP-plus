@@ -2,7 +2,6 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import GRU, Dropout, Dense
-from tensorflow.keras.models import load_model
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -113,11 +112,14 @@ def predict(model, scaled_data, scaler):
     predicted_close_prices = inverse_transformed_values[:, :5]
     return predicted_close_prices
 
-def plot_predictions(predictions):
-    days = ["Day 1", "Day 2", "Day 3", "Day 4", "Day 5"]
-    plt.figure(figsize=(10,5))
-    plt.plot(days, predictions[0], marker='o', linestyle='-', color='b')
-    plt.title("Predicted Closing Prices for Next 5 Days")
+def plot_predictions(ticker_symbol, df, predictions):
+    latest = df.index[-1]
+    days = ["Latest", "Day 1", "Day 2", "Day 3", "Day 4", "Day 5"]
+    latest_price = float(df.loc[latest]["Close"])
+    figurelist = [latest_price] + predictions[0].tolist()
+    plt.figure(figsize=(10,6))
+    plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
+    plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 5 Days")
     plt.xlabel("Days")
     plt.ylabel("Predicted Price")
     plt.grid(True)
@@ -131,13 +133,19 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         else:
             raise ValueError("Model not found!")
         
-        input_length = 500  # 使用過去500天的數據
+        total_days = len(scaled_data)
+        input_length = 500  # 使用過去500天的數據，這個參數您可能還需要根據您的模型需求進行調整
+        
+        # 確保input_length不超過總數據的50%
+        if input_length > total_days * 0.5:
+            input_length = int(total_days * 0.5)
+        
         X = []
         y = []
 
-        # 使用最新的520天數據，但只基於最新的20天來更新模型
-        start_index = len(scaled_data) - 520
-        for i in range(start_index, start_index + 20):
+        # 使用所有可用的數據，但只基於最新的50%數據進行增量訓練
+        start_index = total_days - 2 * input_length
+        for i in range(start_index, start_index + input_length):
             X.append(scaled_data[i:i+input_length, :])
             y.append(scaled_data[i+input_length, 3])  # 只預測下一天
 
@@ -146,7 +154,7 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         # 使用模型訓練
         train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-        model.fit(train_dataset, epochs=5)  # 这里我们假设只训练5个迭代
+        model.fit(train_dataset, epochs=5)  # 這裡我們假設只訓練5個迭代
 
     # 儲存模型
     model_path = os.path.join('saved_models/', ticker_symbol)
@@ -170,13 +178,12 @@ def main():
         print("建立新模型...")
         build(scaled_data, ticker_symbol)
     model = tf.keras.models.load_model(model_path)
-    print("正在使用模型預測...")
     predictions = predict(model, scaled_data, scaler)
         
     # 印出五天的預測值
     for day, value in enumerate(predictions[0], 1):  # 從1開始數
         print(f"Day {day} Predicted Close Price: {value:.2f}")
-    plot_predictions(predictions)
+    plot_predictions(ticker_symbol, df, predictions)
 
     input("按Enter鍵開始增量訓練")
     incremental_training(scaled_data, scaler, ticker_symbol, strategy)
