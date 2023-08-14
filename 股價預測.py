@@ -88,7 +88,11 @@ def build(scaled_data, ticker_symbol):
         model.fit(train_dataset, epochs=50, validation_data=val_dataset)
 
     # 儲存模型
-    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
+    save_dir = 'saved_models'
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    model_path = os.path.join(save_dir, ticker_symbol)
+    model_path = os.path.abspath(model_path)  # 獲取絕對路徑
     model.save(model_path)
 
 def predict(model, scaled_data, scaler):
@@ -119,8 +123,14 @@ def plot_predictions(predictions):
     plt.grid(True)
     plt.show()
 
-def incremental_training(model, scaled_data, scaler, ticker_symbol):
+def incremental_training(scaled_data, scaler, ticker_symbol, strategy): 
     with strategy.scope():
+        model_path = os.path.join('saved_models/', ticker_symbol)
+        if os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path)
+        else:
+            raise ValueError("Model not found!")
+        
         input_length = 500  # 使用過去500天的數據
         X = []
         y = []
@@ -139,7 +149,7 @@ def incremental_training(model, scaled_data, scaler, ticker_symbol):
         model.fit(train_dataset, epochs=5)  # 这里我们假设只训练5个迭代
 
     # 儲存模型
-    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
+    model_path = os.path.join('saved_models/', ticker_symbol)
     model.save(model_path)
 
 def main():
@@ -152,13 +162,13 @@ def main():
     df = get_data(ticker)
     scaled_data, scaler = normalization(df)
 
-    model_path = 'saved_models/' + ticker_symbol
+    model_path = os.path.join('saved_models/', ticker_symbol)
+    model_path = os.path.abspath(model_path)  # 獲取絕對路徑
     if os.path.exists(model_path):
         print("載入已訓練的模型...")
     else:
         print("建立新模型...")
         build(scaled_data, ticker_symbol)
-    model_path = ('saved_models/' + ticker_symbol).encode('utf-8')
     model = tf.keras.models.load_model(model_path)
     print("正在使用模型預測...")
     predictions = predict(model, scaled_data, scaler)
@@ -169,7 +179,7 @@ def main():
     plot_predictions(predictions)
 
     input("按Enter鍵開始增量訓練")
-    incremental_training(model, scaled_data, scaler, ticker_symbol)  # 注意增加了scaler參數
+    incremental_training(scaled_data, scaler, ticker_symbol, strategy)
     input("增量訓練完成，按Enter鍵結束")
 
 
