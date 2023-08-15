@@ -200,7 +200,6 @@ def train_random_forest(ticker_symbol, df, gru_predictions):
     return rf
 
 def predict(model, scaled_data, scaler, df):
-    print("正在使用模型預測...")
     x_latest = scaled_data[-500:]
     x_latest = np.array([x_latest])  
     scaled_predictions = model.predict(x_latest)
@@ -254,7 +253,7 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         X = []
         y = []
 
-        for i in range(start_index, len(scaled_data) - input_length):  # -input_length 是為了確保有足夠的數據進行訓練
+        for i in range(start_index, len(scaled_data) - input_length):  
             X.append(scaled_data[i:i+input_length, :])
             y.append(scaled_data[i+input_length, 3])  # 只預測下一天的收盤價
 
@@ -268,15 +267,30 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
 
         # 使用較低的學習率
         # 使用Nadam優化器
-        # Using Mean Squared Error as the loss function when recompiling
         nadam_optimizer = Nadam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999)
         model.compile(optimizer=nadam_optimizer, loss='mse')
 
         model.fit(train_dataset, epochs=500, callbacks=[early_stopping])
 
-    # 儲存模型
-    model_path = os.path.join('saved_models_v3/', ticker_symbol)
-    model.save(model_path)
+        # 儲存GRU模型
+        model_path = os.path.join('saved_models_v3/', ticker_symbol)
+        model.save(model_path)
+        
+        # 以下是針對隨機森林的增量訓練
+        # 首先載入原始資料和GRU的預測
+        df = get_data_with_indicators(ticker_symbol + ".TW")
+        gru_predictions = predict(model, scaled_data, scaler, df)
+        
+        # 將GRU的預測結果添加到df中作為新的特徵
+        for i in range(15):
+            df[f"GRU_Prediction_Day_{i+1}"] = gru_predictions[i]
+        
+        # 使用此更新後的資料集重新訓練隨機森林模型
+        rf_model = train_random_forest(ticker_symbol, df, gru_predictions)
+        
+        # 儲存隨機森林模型
+        rf_model_path = f"saved_models_v3/rf_model_{ticker_symbol}.joblib"
+        dump(rf_model, rf_model_path)
 
 def main():
     # 偵測TPU並創建TPU策略
@@ -332,6 +346,7 @@ def main():
     print("載入已增量訓練的隨機森林模型...")
     rf_model = load(rf_model_path)
     
+    print("正在預測...")
     # GRU模型的預測
     gru_predictions = predict(model, scaled_data, scaler, df)
     # 將GRU的預測結果添加到df中
