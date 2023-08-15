@@ -167,6 +167,7 @@ def build(strategy, scaled_data, ticker_symbol):
     return model
 
 def train_random_forest(ticker_symbol, df, gru_predictions):
+    
     # 創建特徵和標籤數據集
     X = df.drop(columns=["Close"]).values
     y = df["Close"].values
@@ -183,8 +184,10 @@ def train_random_forest(ticker_symbol, df, gru_predictions):
     X_train, X_test = X[:train_size], X[train_size:]
     y_train, y_test = y[:train_size], y[train_size:]
     
-    # 創建和訓練隨機森林模型
+    # 使用scikit-learn的隨機森林
+    print("Using CPU-based RandomForestRegressor from scikit-learn")
     rf = RandomForestRegressor(n_estimators=100, max_depth=None, random_state=42)
+    
     rf.fit(X_train, y_train)
     
     # 使用模型進行預測
@@ -194,13 +197,12 @@ def train_random_forest(ticker_symbol, df, gru_predictions):
     mse = ((rf_predictions - y_test) ** 2).mean()
     print(f"Random Forest MSE: {mse:.2f}")
     
-    # 在 train_random_forest 函數的最後添加：
+    # 儲存隨機森林模型
     rf_model_path = f"saved_models_v3/rf_model_{ticker_symbol}.joblib"
     dump(rf, rf_model_path)
     return rf
 
 def predict(model, scaled_data, scaler, df):
-    print("正在使用模型預測...")
     x_latest = scaled_data[-500:]
     x_latest = np.array([x_latest])  
     scaled_predictions = model.predict(x_latest)
