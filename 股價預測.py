@@ -269,7 +269,7 @@ def main():
     predictions = predict(model, scaled_data, scaler, df)
         
     # 印出五天的預測值
-    for day, value in enumerate(predictions[0], 1):  # 從1開始數
+    for day, value in enumerate(predictions, 1):  # 從1開始數
         print(f"Day {day} Predicted Close Price: {value:.2f}")
     plot_predictions(ticker_symbol, df, predictions)
 
