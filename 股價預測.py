@@ -154,7 +154,7 @@ def build(strategy, scaled_data, ticker_symbol):
         early_stopping = EarlyStopping(patience=30, restore_best_weights=True)
         model.fit(train_dataset, epochs=250, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
 
-    save_dir = 'saved_models'
+    save_dir = 'saved_models_v2'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     model_path = os.path.join(save_dir, ticker_symbol)
@@ -181,10 +181,11 @@ def predict(model, scaled_data, scaler, df):
 
 def plot_predictions(ticker_symbol, df, predictions):
     latest = df.index[-1]
-    days = ["Latest"] + [f"Day {i}" for i in range(1, 16)]
+    dates = df.index
+    days = [str(dates[-1])[:10]] + [f"Day {i}" for i in range(1, 16)]
     latest_price = float(df.loc[latest]["Close"])
     figurelist = [latest_price] + predictions.tolist()
-    plt.figure(figsize=(12,6))
+    plt.figure(figsize=(15,6))
     plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
     plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 15 Days")
     plt.xlabel("Days")
