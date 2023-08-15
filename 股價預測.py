@@ -200,6 +200,7 @@ def train_random_forest(ticker_symbol, df, gru_predictions):
     return rf
 
 def predict(model, scaled_data, scaler, df):
+    print("正在使用模型預測...")
     x_latest = scaled_data[-500:]
     x_latest = np.array([x_latest])  
     scaled_predictions = model.predict(x_latest)
@@ -211,7 +212,11 @@ def predict(model, scaled_data, scaler, df):
     dummy_array[:, 3] = scaled_predictions[0]
     
     # Use the inverse_transform method to decode our predicted prices
-    inverted_array = scaler.inverse_transform(dummy_array)
+    # We only need to transform the 'Close' column, so we create a full dummy array, 
+    # inverse_transform it, and then extract only the 'Close' column values
+    dummy_array_full = np.zeros_like(scaled_data)
+    dummy_array_full[:dummy_array.shape[0], :] = dummy_array
+    inverted_array = scaler.inverse_transform(dummy_array_full)[:dummy_array.shape[0]]
     
     # Return only the 'Close' column values (which now have our decoded prices)
     return inverted_array[:, 3]
