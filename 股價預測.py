@@ -6,7 +6,6 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import GRU, Dropout, Dense
 from tensorflow.keras.optimizers import Nadam
 from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.regularizers import l1_l2
 from tensorflow.keras.callbacks import ReduceLROnPlateau
 import yfinance as yf
 import pandas as pd
@@ -162,7 +161,7 @@ def build(strategy, scaled_data, ticker_symbol):
     model_path = os.path.abspath(model_path)
     model.save(model_path)
 
-def predict(model, scaled_data, scaler):
+def predict(model, scaled_data, scaler, df):
     print("正在使用模型預測...")
     x_latest = scaled_data[-500:]
     x_latest = np.array([x_latest])  
@@ -267,7 +266,7 @@ def main():
         print("建立新模型...")
         build(strategy, scaled_data, ticker_symbol)
     model = tf.keras.models.load_model(model_path, custom_objects={'constrained_mae': constrained_mae})
-    predictions = predict(model, scaled_data, scaler)
+    predictions = predict(model, scaled_data, scaler, df)
         
     # 印出五天的預測值
     for day, value in enumerate(predictions[0], 1):  # 從1開始數
