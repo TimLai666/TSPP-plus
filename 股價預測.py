@@ -183,7 +183,7 @@ def plot_predictions(ticker_symbol, df, predictions):
     latest = df.index[-1]
     days = ["Latest"] + [f"Day {i}" for i in range(1, 16)]
     latest_price = float(df.loc[latest]["Close"])
-    figurelist = [latest_price] + predictions[0].tolist()
+    figurelist = [latest_price] + [predictions.tolist()]
     plt.figure(figsize=(12,6))
     plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
     plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 15 Days")
