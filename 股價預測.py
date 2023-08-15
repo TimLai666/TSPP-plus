@@ -198,7 +198,7 @@ def plot_predictions(ticker_symbol, df, predictions):
 
 def incremental_training(scaled_data, scaler, ticker_symbol, strategy): 
     with strategy.scope():
-        model_path = os.path.join('saved_models/', ticker_symbol)
+        model_path = os.path.join('saved_models_v2/', ticker_symbol)
         if os.path.exists(model_path):
             model = tf.keras.models.load_model(model_path, custom_objects={'constrained_mae': constrained_mae})
         else:
@@ -232,7 +232,7 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         model.fit(train_dataset, epochs=500, callbacks=[early_stopping])
 
     # 儲存模型
-    model_path = os.path.join('saved_models/', ticker_symbol)
+    model_path = os.path.join('saved_models_v2/', ticker_symbol)
     model.save(model_path)
 
 def main():
@@ -258,7 +258,7 @@ def main():
     df = get_data_with_indicators(ticker)
     scaled_data, scaler = normalization(df)
 
-    model_path = os.path.join('saved_models/', ticker_symbol)
+    model_path = os.path.join('saved_models_v2/', ticker_symbol)
     model_path = os.path.abspath(model_path)  # 獲取絕對路徑
     if os.path.exists(model_path):
         print("載入已訓練的模型...")
