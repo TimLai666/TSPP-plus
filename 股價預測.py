@@ -110,15 +110,6 @@ def normalization(df):
     
     return scaled_data, scaler
 
-def constrained_mae(y_true, y_pred):
-    """ 
-    Constrained Mean Absolute Error Loss. 
-    This penalizes predictions that are outside the [-0.1, 0.1] range more heavily.
-    """
-    base_loss = tf.abs(y_true - y_pred)
-    penalty = tf.where(tf.logical_or(y_pred < -0.1, y_pred > 0.1), 1.0, 0.0)
-    return tf.reduce_mean(base_loss + penalty)
-
 def build(strategy, scaled_data, ticker_symbol):
     with strategy.scope():
         input_length = 500
@@ -137,15 +128,10 @@ def build(strategy, scaled_data, ticker_symbol):
         y_train, y_test = y[:train_size], y[train_size:]
 
         model = Sequential()
-        model.add(LSTM(256, return_sequences=True, input_shape=(input_length, input_dim)))
+        model.add(LSTM(1024, return_sequences=True, input_shape=(input_length, input_dim)))
         model.add(Dropout(0.2))
 
-        '''num_layers = 10
-        for _ in range(num_layers - 1):
-            model.add(GRU(256, return_sequences=True))
-            model.add(Dropout(0.5))'''
-
-        model.add(GRU(256))
+        model.add(GRU(620))
         model.add(Dropout(0.5))
         model.add(Dense(15, activation='linear'))  # Directly predicting closing prices
 
@@ -155,7 +141,7 @@ def build(strategy, scaled_data, ticker_symbol):
         reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
         train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).shuffle(len(X_train)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
         val_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-        early_stopping = EarlyStopping(patience=100, restore_best_weights=True)
+        early_stopping = EarlyStopping(patience=5, restore_best_weights=True)
         model.fit(train_dataset, epochs=300, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
 
     save_dir = 'saved_models_v3'
@@ -165,42 +151,6 @@ def build(strategy, scaled_data, ticker_symbol):
     model_path = os.path.abspath(model_path)
     model.save(model_path)
     return model
-
-def train_random_forest(ticker_symbol, df, gru_predictions):
-    
-    # 創建特徵和標籤數據集
-    X = df.drop(columns=["Close"]).values
-    y = df["Close"].values
-    
-    # 將GRU的預測添加到整個數據集
-    for i in range(15):
-        df[f"GRU_Prediction_Day_{i+1}"] = gru_predictions[i]
-    
-    X = df.drop(columns=["Close"]).fillna(0).values  # 將NaN值替換為0
-    y = df["Close"].values
-    
-    # 分割數據集為訓練和測試集
-    train_size = int(0.8 * len(X))
-    X_train, X_test = X[:train_size], X[train_size:]
-    y_train, y_test = y[:train_size], y[train_size:]
-    
-    # 使用scikit-learn的隨機森林
-    print("Using CPU-based RandomForestRegressor from scikit-learn")
-    rf = RandomForestRegressor(n_estimators=100, max_depth=None, random_state=42)
-    
-    rf.fit(X_train, y_train)
-    
-    # 使用模型進行預測
-    rf_predictions = rf.predict(X_test)
-    
-    # 計算模型的MSE
-    mse = ((rf_predictions - y_test) ** 2).mean()
-    print(f"Random Forest MSE: {mse:.2f}")
-    
-    # 儲存隨機森林模型
-    rf_model_path = f"saved_models_v3/rf_model_{ticker_symbol}.joblib"
-    dump(rf, rf_model_path)
-    return rf
 
 def predict(model, scaled_data, scaler, df):
     x_latest = scaled_data[-500:]
@@ -223,20 +173,15 @@ def predict(model, scaled_data, scaler, df):
     # Return only the 'Close' column values (which now have our decoded prices)
     return inverted_array[:, 3]
 
-def predict_with_random_forest(rf_model, df):
-    X = df.drop(columns=["Close"]).fillna(0).values  # 將NaN值替換為0
-    return rf_model.predict(X)
-
-def plot_predictions(ticker_symbol, df, rf_predictions):
-    # 由於只繪製隨機森林的預測，我們不需要GRU的預測
+def plot_predictions(ticker_symbol, df, gru_predictions):
     latest = df.index[-1]
     dates = df.index
     days = [str(dates[-1])[:10]] + [f"Day {i}" for i in range(1, 16)]
     latest_price = float(df.loc[latest]["Close"])
-    figurelist = [latest_price] + list(rf_predictions[:15])
+    figurelist = [latest_price] + list(gru_predictions[:15])
     plt.figure(figsize=(15,6))
     plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
-    plt.title(f"[{ticker_symbol}] Random Forest Predicted Closing Prices for Next 15 Days")
+    plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 15 Days")
     plt.xlabel("Days")
     plt.ylabel("Predicted Price")
     plt.grid(True)
@@ -250,7 +195,7 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
     with strategy.scope():
         model_path = os.path.join('saved_models_v3/', ticker_symbol)
         if os.path.exists(model_path):
-            model = tf.keras.models.load_model(model_path, custom_objects={'constrained_mae': constrained_mae})
+            model = tf.keras.models.load_model(model_path)
         else:
             raise ValueError("Model not found!")
         
@@ -270,36 +215,17 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         # 使用模型訓練
         train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-        # 加入早期停止
-        early_stopping = EarlyStopping(patience=30, restore_best_weights=True)
-
         # 使用較低的學習率
         # 使用Nadam優化器
         nadam_optimizer = Nadam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999)
         model.compile(optimizer=nadam_optimizer, loss='mse')
 
-        model.fit(train_dataset, epochs=1000, callbacks=[early_stopping])
+        model.fit(train_dataset, epochs=10)
 
         # 儲存GRU模型
         model_path = os.path.join('saved_models_v3/', ticker_symbol)
         model.save(model_path)
         
-        # 以下是針對隨機森林的增量訓練
-        # 首先載入原始資料和GRU的預測
-        df = get_data_with_indicators(ticker_symbol + ".TW")
-        gru_predictions = predict(model, scaled_data, scaler, df)
-        
-        # 將GRU的預測結果添加到df中作為新的特徵
-        for i in range(15):
-            df[f"GRU_Prediction_Day_{i+1}"] = gru_predictions[i]
-        
-        # 使用此更新後的資料集重新訓練隨機森林模型
-        rf_model = train_random_forest(ticker_symbol, df, gru_predictions)
-        
-        # 儲存隨機森林模型
-        rf_model_path = f"saved_models_v3/rf_model_{ticker_symbol}.joblib"
-        dump(rf_model, rf_model_path)
-
 def main():
     strategy = tf.distribute.MirroredStrategy()  # 如果沒有TPU，則繼續使用GPU策略
     print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
@@ -314,21 +240,11 @@ def main():
     model_path = os.path.join('saved_models_v3/', ticker_symbol)
     model_path = os.path.abspath(model_path)  # 獲取絕對路徑
     if os.path.exists(model_path):
-        print("載入已訓練的GRU模型...")
-        model = tf.keras.models.load_model(model_path, custom_objects={'constrained_mae': constrained_mae})
+        print("載入已訓練的LSTM/GRU模型...")
+        model = tf.keras.models.load_model(model_path)
     else:
-        print("建立新GRU模型...")
+        print("建立新LSTM/GRU模型...")
         model = build(strategy, scaled_data, ticker_symbol)
-
-    # 載入隨機森林模型
-    rf_model_path = f"saved_models_v3/rf_model_{ticker_symbol}.joblib"
-    if os.path.exists(rf_model_path):
-        print("載入已訓練的隨機森林模型...")
-        rf_model = load(rf_model_path)
-    else:
-        print("建立新隨機森林模型...")
-        predictions = predict(model, scaled_data, scaler, df)
-        rf_model = train_random_forest(ticker_symbol, df, predictions)
 
     # 增量訓練
     print("正在使用最新資料增量訓練...")
@@ -337,9 +253,7 @@ def main():
     
     # 重新載入已訓練的GRU和隨機森林模型以進行預測
     print("載入已增量訓練的GRU模型...")
-    model = tf.keras.models.load_model(model_path, custom_objects={'constrained_mae': constrained_mae})
-    print("載入已增量訓練的隨機森林模型...")
-    rf_model = load(rf_model_path)
+    model = tf.keras.models.load_model(model_path)
     
     print("正在預測...")
     # GRU模型的預測
@@ -348,15 +262,12 @@ def main():
     for i in range(15):
         df[f"GRU_Prediction_Day_{i+1}"] = gru_predictions[i]
     
-    # 使用隨機森林進行預測
-    rf_predictions = predict_with_random_forest(rf_model, df)
-    
     # 印出五天的預測值
-    for day, value in enumerate(rf_predictions[:5], 1):  # 從1開始數
-        print(f"Day {day} Predicted Close Price (Random Forest): {value:.2f}")
+    for day, value in enumerate(gru_predictions[:5], 1):  # 從1開始數
+        print(f"Day {day} Predicted Close Price: {value:.2f}")
     
     # 繪製隨機森林的預測
-    plot_predictions(ticker_symbol, df, rf_predictions)
+    plot_predictions(ticker_symbol, df, gru_predictions)
 
 if __name__ == "__main__":
     main()
