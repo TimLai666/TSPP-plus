@@ -217,7 +217,7 @@ def predict(model, scaled_data, scaler, df):
     # We only need to transform the 'Close' column, so we create a full dummy array, 
     # inverse_transform it, and then extract only the 'Close' column values
     dummy_array_full = np.zeros_like(scaled_data)
-    dummy_array_full[:dummy_array.shape[0], :] = dummy_array
+    dummy_array_full[:dummy_array.shape[0], :] = dummy_array[:, :30]
     inverted_array = scaler.inverse_transform(dummy_array_full)[:dummy_array.shape[0]]
     
     # Return only the 'Close' column values (which now have our decoded prices)
