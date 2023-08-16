@@ -3,7 +3,7 @@
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import GRU, Dropout, Dense
+from tensorflow.keras.layers import GRU, Dropout, Dense, LSTM
 from tensorflow.keras.optimizers import Nadam
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import ReduceLROnPlateau
@@ -137,13 +137,13 @@ def build(strategy, scaled_data, ticker_symbol):
         y_train, y_test = y[:train_size], y[train_size:]
 
         model = Sequential()
-        model.add(GRU(256, return_sequences=True, input_shape=(input_length, input_dim)))
+        model.add(LSTM(256, return_sequences=True, input_shape=(input_length, input_dim)))
         model.add(Dropout(0.2))
 
-        num_layers = 10
+        '''num_layers = 10
         for _ in range(num_layers - 1):
             model.add(GRU(256, return_sequences=True))
-            model.add(Dropout(0.5))
+            model.add(Dropout(0.5))'''
 
         model.add(GRU(256))
         model.add(Dropout(0.5))
@@ -227,15 +227,16 @@ def predict_with_random_forest(rf_model, df):
     X = df.drop(columns=["Close"]).fillna(0).values  # 將NaN值替換為0
     return rf_model.predict(X)
 
-def plot_predictions(ticker_symbol, df, predictions):
+def plot_predictions(ticker_symbol, df, rf_predictions):
+    # 由於只繪製隨機森林的預測，我們不需要GRU的預測
     latest = df.index[-1]
     dates = df.index
     days = [str(dates[-1])[:10]] + [f"Day {i}" for i in range(1, 16)]
     latest_price = float(df.loc[latest]["Close"])
-    figurelist = [latest_price] + predictions.tolist()
+    figurelist = [latest_price] + list(rf_predictions[:15])
     plt.figure(figsize=(15,6))
     plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
-    plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 15 Days")
+    plt.title(f"[{ticker_symbol}] Random Forest Predicted Closing Prices for Next 15 Days")
     plt.xlabel("Days")
     plt.ylabel("Predicted Price")
     plt.grid(True)
@@ -270,14 +271,14 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
         # 加入早期停止
-        early_stopping = EarlyStopping(patience=100, restore_best_weights=True)
+        early_stopping = EarlyStopping(patience=30, restore_best_weights=True)
 
         # 使用較低的學習率
         # 使用Nadam優化器
         nadam_optimizer = Nadam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999)
         model.compile(optimizer=nadam_optimizer, loss='mse')
 
-        model.fit(train_dataset, epochs=500, callbacks=[early_stopping])
+        model.fit(train_dataset, epochs=1000, callbacks=[early_stopping])
 
         # 儲存GRU模型
         model_path = os.path.join('saved_models_v3/', ticker_symbol)
@@ -300,21 +301,8 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         dump(rf_model, rf_model_path)
 
 def main():
-    # 偵測TPU並創建TPU策略
-    try:
-        tpu = tf.distribute.cluster_resolver.TPUClusterResolver()  # 這將在Colab中返回一個適當的TPU
-        print('Running on TPU ', tpu.master())
-    except ValueError:
-        tpu = None
-
-    if tpu:
-        tf.config.experimental_connect_to_cluster(tpu)
-        tf.tpu.experimental.initialize_tpu_system(tpu)
-        strategy = tf.distribute.experimental.TPUStrategy(tpu)
-        print(f"Number of TPU cores: {strategy.num_replicas_in_sync}")
-    else:
-        strategy = tf.distribute.MirroredStrategy()  # 如果沒有TPU，則繼續使用GPU策略
-        print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
+    strategy = tf.distribute.MirroredStrategy()  # 如果沒有TPU，則繼續使用GPU策略
+    print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
 
     # 設定ETF代碼
     ticker_symbol = str(input("輸入要預測的股票代碼："))
