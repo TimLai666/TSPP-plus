@@ -1,4 +1,4 @@
-#v3
+#v3.5
 
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -7,13 +7,11 @@ from tensorflow.keras.layers import GRU, Dropout, Dense, LSTM
 from tensorflow.keras.optimizers import Nadam
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.callbacks import ReduceLROnPlateau
-from sklearn.ensemble import RandomForestRegressor
-from joblib import dump, load
+from sklearn.preprocessing import MinMaxScaler
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import datetime
-from sklearn.preprocessing import MinMaxScaler
 import os
 
 def get_data_with_indicators(ticker):
@@ -47,8 +45,18 @@ def get_data(ticker):
     df["Amplitude"] = df['High'] / df["Open"] - df['Low'] / df["Open"]
     df["Change"] = (df["Close"] - df["Close"].shift(1))/df["Close"].shift(1)
 
+    # 台股加權
+    tdata = yf.download("^TWII", start="2021-01-01", end=today)
+    tdata.reset_index(drop=True, inplace=True)
+    df["^TWII"] =tdata["Close"]
+    # 道瓊指數
+    ddata = yf.download("^DJI", start="2021-01-01", end=today)
+    ddata.reset_index(drop=True, inplace=True)
+    df["^DJI"] =ddata["Close"]
+
     df.set_index(["Date"], inplace = True)
-    df.columns = ["Open", "High", "Low", "Close", "Adj Close", "Volume", 'Year', 'Year%4', 'Year%2', 'Month', 'Day', "weekday", "start_of_month", "end_of_month","Amplitude", "Change"]
+    df.columns = ["Open", "High", "Low", "Close", "Adj Close", "Volume", 'Year', 'Year%4', 'Year%2', 'Month', 'Day', "weekday", "start_of_month", "end_of_month","Amplitude", "Change", "^TWII", "^DJI"]
+
     return df
 
 def add_technical_indicators(df):
@@ -113,7 +121,7 @@ def normalization(df):
 def build(strategy, scaled_data, ticker_symbol):
     with strategy.scope():
         input_length = 500
-        input_dim = 30
+        input_dim = 32
 
         X = []
         y = []
@@ -144,7 +152,7 @@ def build(strategy, scaled_data, ticker_symbol):
         early_stopping = EarlyStopping(patience=5, restore_best_weights=True)
         model.fit(train_dataset, epochs=300, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
 
-    save_dir = 'saved_models_v3'
+    save_dir = 'saved_models_v3.5'
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     model_path = os.path.join(save_dir, ticker_symbol)
@@ -167,7 +175,7 @@ def predict(model, scaled_data, scaler, df):
     # We only need to transform the 'Close' column, so we create a full dummy array, 
     # inverse_transform it, and then extract only the 'Close' column values
     dummy_array_full = np.zeros_like(scaled_data)
-    dummy_array_full[:dummy_array.shape[0], :] = dummy_array[:, :30]
+    dummy_array_full[:dummy_array.shape[0], :] = dummy_array[:, :32]
     inverted_array = scaler.inverse_transform(dummy_array_full)[:dummy_array.shape[0]]
     
     # Return only the 'Close' column values (which now have our decoded prices)
@@ -193,7 +201,7 @@ def plot_predictions(ticker_symbol, df, gru_predictions):
 
 def incremental_training(scaled_data, scaler, ticker_symbol, strategy): 
     with strategy.scope():
-        model_path = os.path.join('saved_models_v3/', ticker_symbol)
+        model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
         if os.path.exists(model_path):
             model = tf.keras.models.load_model(model_path)
         else:
@@ -223,7 +231,7 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         model.fit(train_dataset, epochs=10)
 
         # 儲存GRU模型
-        model_path = os.path.join('saved_models_v3/', ticker_symbol)
+        model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
         model.save(model_path)
         
 def main():
@@ -237,7 +245,7 @@ def main():
     scaled_data, scaler = normalization(df)
 
     # 載入GRU模型
-    model_path = os.path.join('saved_models_v3/', ticker_symbol)
+    model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
     model_path = os.path.abspath(model_path)  # 獲取絕對路徑
     if os.path.exists(model_path):
         print("載入已訓練的LSTM/GRU模型...")
@@ -252,7 +260,7 @@ def main():
     print("增量訓練完成")
     
     # 重新載入已訓練的GRU和隨機森林模型以進行預測
-    print("載入已增量訓練的GRU模型...")
+    print("載入已增量訓練的LSTM/GRU模型...")
     model = tf.keras.models.load_model(model_path)
     
     print("正在預測...")
