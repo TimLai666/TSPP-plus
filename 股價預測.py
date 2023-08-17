@@ -1,4 +1,4 @@
-#v3.5
+#v4
 
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -14,18 +14,22 @@ import numpy as np
 import datetime
 import os
 
+dir_path = 'saved_models_v4/'
+old_dir = ['saved_models_v3.5']
+
 def get_data_with_indicators(ticker):
     df = get_data(ticker)
     df = add_technical_indicators(df)
-    df.fillna(0, inplace=True)  # 填充 DataFrame 中的所有 NaN 值
+    df.fillna(0, inplace=True)
     return df
 
 def get_data(ticker):
     today = datetime.date.today()
+    start_date = "1900-01-01"
     #yesterday = today - datetime.timedelta(days=1)
 
     # 下載歷史數據
-    data = yf.download(ticker, start="2021-01-01", end=today)
+    data = yf.download(ticker, start=start_date, end=today)
     df = pd.DataFrame(data)
     # 把日期索引重設為一個欄位
     df = df.reset_index()
@@ -44,17 +48,15 @@ def get_data(ticker):
     df["end_of_month"] = df["Date"].dt.is_month_end.astype(int)
     df["Amplitude"] = df['High'] / df["Open"] - df['Low'] / df["Open"]
     df["Change"] = (df["Close"] - df["Close"].shift(1))/df["Close"].shift(1)
+    df.set_index(["Date"], inplace = True)
 
     # 台股加權
-    tdata = yf.download("^TWII", start="2021-01-01", end=today)
-    tdata.reset_index(drop=True, inplace=True)
+    tdata = yf.download("^TWII", start=start_date, end=today)
     df["^TWII"] =tdata["Close"]
     # 道瓊指數
-    ddata = yf.download("^DJI", start="2021-01-01", end=today)
-    ddata.reset_index(drop=True, inplace=True)
+    ddata = yf.download("^DJI", start=start_date, end=today)
     df["^DJI"] =ddata["Close"]
 
-    df.set_index(["Date"], inplace = True)
     df.columns = ["Open", "High", "Low", "Close", "Adj Close", "Volume", 'Year', 'Year%4', 'Year%2', 'Month', 'Day', "weekday", "start_of_month", "end_of_month","Amplitude", "Change", "^TWII", "^DJI"]
 
     return df
@@ -118,22 +120,63 @@ def normalization(df):
     
     return scaled_data, scaler
 
-def build(strategy, scaled_data, ticker_symbol):
+def inverse_scale_predictions(predictions, original_shape, scaler):
+    """Inverse scale the predictions."""
+    # Create a dummy array with the same shape as the original data
+    dummy_array = np.zeros(shape=original_shape)
+    
+    # Fill the predictions into the correct position of the dummy array (here, the Close prices)
+    dummy_array[:len(predictions), 3] = predictions
+    
+    # Inverse transform using the scaler
+    inverted_array = scaler.inverse_transform(dummy_array)
+    
+    # Return the inverse-transformed predictions
+    return inverted_array[:len(predictions), 3]
+
+def prepare_data(scaled_data, input_length=500, output_length=15):
+    X = []
+    y = []
+
+    data_len = len(scaled_data)
+    
+    # Define the rolling window size
+    rolling_window_size = input_length
+    
+    # Initial starting index for the rolling window
+    start_idx = 0
+    
+    while start_idx + rolling_window_size + output_length <= data_len:
+        X.append(scaled_data[start_idx:start_idx+rolling_window_size, :])
+        y.append(scaled_data[start_idx+rolling_window_size:start_idx+rolling_window_size+output_length, 3])  # Predicting the 'Close' prices
+        
+        # Move the starting index by the output_length
+        start_idx += output_length
+
+    X, y= np.array(X), np.array(y)
+    train_size = int(0.8 * len(X))
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+    
+    return X_train, y_train, X_test, y_test
+
+def load_and_build_models(strategy, scaled_data, ticker_symbol, X_train, y_train, X_test, y_test):
+    # 載入GRU模型
+    model_path = os.path.join(dir_path, ticker_symbol)
+    model_path = os.path.abspath(model_path)
+    if os.path.exists(model_path):
+        print("載入已訓練的LSTM/GRU模型...")
+        model = tf.keras.models.load_model(model_path)
+    else:
+        print("建立新LSTM/GRU模型...")
+        model = build(strategy, X_train, y_train, X_test, y_test, ticker_symbol)
+
+    return model
+
+def build(strategy, X_train, y_train, X_test, y_test, ticker_symbol):
     with strategy.scope():
-        input_length = 500
-        input_dim = 32
-
-        X = []
-        y = []
-        for i in range(input_length, len(scaled_data) - 14):
-            X.append(scaled_data[i-input_length:i, :])
-            y.append(scaled_data[i:i+15, 3])  # 直接使用收盤價格
-
-        X, y = np.array(X), np.array(y)
-
-        train_size = int(0.8 * len(X))
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
+        input_length = X_train.shape[1]
+        input_dim = X_train.shape[2]
 
         model = Sequential()
         model.add(LSTM(1024, return_sequences=True, input_shape=(input_length, input_dim)))
@@ -152,33 +195,37 @@ def build(strategy, scaled_data, ticker_symbol):
         early_stopping = EarlyStopping(patience=5, restore_best_weights=True)
         model.fit(train_dataset, epochs=300, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
 
-    save_dir = 'saved_models_v3.5'
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    model_path = os.path.join(save_dir, ticker_symbol)
-    model_path = os.path.abspath(model_path)
-    model.save(model_path)
-    return model
+        model_path = os.path.join(dir_path, ticker_symbol)
+        model_path = os.path.abspath(model_path)
+        model.save(model_path)
+        return model
 
-def predict(model, scaled_data, scaler, df):
+def make_predictions(model, scaled_data, scaler):
+    print("正在預測...")
+    
+    # GRU模型的預測
     x_latest = scaled_data[-500:]
-    x_latest = np.array([x_latest])  
+    x_latest = np.array([x_latest])
     scaled_predictions = model.predict(x_latest)
     
-    # Create a dummy array with the same shape as our dataset
+    # Decoding GRU predictions using the inverse_scale_predictions function
+    gru_predictions = inverse_scale_predictions(scaled_predictions[0], scaled_data.shape, scaler)
+
+    return gru_predictions
+
+def predict(model, scaled_data, scaler, df):
+    # GRU model predictions
+    x_latest = scaled_data[-500:]
+    x_latest = np.array([x_latest])
+    scaled_predictions = model.predict(x_latest)
+    
+    # Decoding GRU predictions
     dummy_array = np.zeros(shape=(len(scaled_predictions[0]), df.shape[1]))
-    
-    # Place our predictions in the 'Close' column of our dummy array
     dummy_array[:, 3] = scaled_predictions[0]
-    
-    # Use the inverse_transform method to decode our predicted prices
-    # We only need to transform the 'Close' column, so we create a full dummy array, 
-    # inverse_transform it, and then extract only the 'Close' column values
     dummy_array_full = np.zeros_like(scaled_data)
     dummy_array_full[:dummy_array.shape[0], :] = dummy_array[:, :32]
     inverted_array = scaler.inverse_transform(dummy_array_full)[:dummy_array.shape[0]]
     
-    # Return only the 'Close' column values (which now have our decoded prices)
     return inverted_array[:, 3]
 
 def plot_predictions(ticker_symbol, df, gru_predictions):
@@ -186,27 +233,61 @@ def plot_predictions(ticker_symbol, df, gru_predictions):
     dates = df.index
     days = [str(dates[-1])[:10]] + [f"Day {i}" for i in range(1, 16)]
     latest_price = float(df.loc[latest]["Close"])
-    figurelist = [latest_price] + list(gru_predictions[:15])
+    
+    gru_figurelist = [latest_price] + list(gru_predictions[:15])
+    
     plt.figure(figsize=(15,6))
-    plt.plot(days, figurelist, marker='o', linestyle='-', color='b')
+    plt.plot(days, gru_figurelist, marker='o', linestyle='-', color='b', label='LSTM/GRU Predictions')
     plt.title(f"[{ticker_symbol}] Predicted Closing Prices for Next 15 Days")
     plt.xlabel("Days")
     plt.ylabel("Predicted Price")
     plt.grid(True)
-    
-    for i, txt in enumerate(figurelist):
-        plt.annotate(f"{txt:.2f}", (days[i], figurelist[i]), textcoords="offset points", xytext=(0,10), ha='center')
-    
+
+    # Annotating the prices on each point
+    for i, v in enumerate(gru_figurelist):
+        plt.annotate(f"{v:.2f}", (days[i], v), textcoords="offset points", xytext=(0,10), ha='center')
+
+    plt.legend()
     plt.show()
 
-def incremental_training(scaled_data, scaler, ticker_symbol, strategy): 
+def plot_accuracy_visualization(ticker_symbol, df, model, scaled_data, scaler, days_to_show=100):
+
+    start_index = len(scaled_data) - 500 - days_to_show  # Starting from 500 days before the end of the days_to_show
+    actual_prices = []
+    gru_predicted_prices = []
+
+    for i in range(start_index, len(scaled_data) - 500):
+        x_data = scaled_data[i:i + 500]
+        x_data = np.array([x_data])
+        
+        # GRU prediction
+        scaled_gru_prediction = model.predict(x_data)
+        gru_prediction = inverse_scale_predictions(scaled_gru_prediction[0], scaled_data.shape, scaler)
+        gru_predicted_prices.append(gru_prediction[-1])  # Take only the last prediction as it's the next day prediction
+
+        # Actual price
+        actual_prices.append(df["Close"].iloc[i + 500])
+
+    # Plotting
+    plt.figure(figsize=(15, 6))
+    plt.plot(df.index[-days_to_show:], actual_prices, label="Actual Prices", color="g")
+    plt.plot(df.index[-days_to_show:], gru_predicted_prices, label="LSTM/GRU Predicted Prices", color="b")
+    plt.title(f"[{ticker_symbol}] Model Accuracy Visualization for Past {days_to_show} Days")
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+def incremental_training(scaled_data, ticker_symbol, strategy):
     with strategy.scope():
-        model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
+        # GRU模型的增量訓練
+        model_path = os.path.join(dir_path, ticker_symbol)
         if os.path.exists(model_path):
             model = tf.keras.models.load_model(model_path)
         else:
-            raise ValueError("Model not found!")
-        
+            raise ValueError("LSTM/GRU Model not found!")
+
         input_length = 500  # 使用過去500天的數據
 
         # 使用最新的500天數據
@@ -214,14 +295,15 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         X = []
         y = []
 
-        for i in range(start_index, len(scaled_data) - input_length):  
-            X.append(scaled_data[i:i+input_length, :])
-            y.append(scaled_data[i+input_length, 3])  # 只預測下一天的收盤價
+        for i in range(start_index, len(scaled_data) - input_length):
+            X.append(scaled_data[i:i + input_length, :])
+            y.append(scaled_data[i + input_length, 3])  # 只預測下一天的收盤價
 
         X, y = np.array(X), np.array(y)
 
         # 使用模型訓練
-        train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+        train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(
+            buffer_size=tf.data.experimental.AUTOTUNE)
 
         # 使用較低的學習率
         # 使用Nadam優化器
@@ -231,51 +313,46 @@ def incremental_training(scaled_data, scaler, ticker_symbol, strategy):
         model.fit(train_dataset, epochs=10)
 
         # 儲存GRU模型
-        model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
+        model_path = os.path.join(dir_path, ticker_symbol)
         model.save(model_path)
         
+    return model
+        
 def main():
-    strategy = tf.distribute.MirroredStrategy()  # 如果沒有TPU，則繼續使用GPU策略
+    strategy = tf.distribute.MirroredStrategy()
     print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
+
+    # 相容舊模型
+    if not os.path.exists(dir_path):
+        for old in old_dir:    
+            if os.path.exists(old):
+                os.rename(old, dir_path)
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
 
     # 設定ETF代碼
     ticker_symbol = str(input("輸入要預測的股票代碼："))
-    ticker = ticker_symbol+".TW"
+    ticker = ticker_symbol + ".TW"
     df = get_data_with_indicators(ticker)
     scaled_data, scaler = normalization(df)
-
-    # 載入GRU模型
-    model_path = os.path.join('saved_models_v3.5/', ticker_symbol)
-    model_path = os.path.abspath(model_path)  # 獲取絕對路徑
-    if os.path.exists(model_path):
-        print("載入已訓練的LSTM/GRU模型...")
-        model = tf.keras.models.load_model(model_path)
-    else:
-        print("建立新LSTM/GRU模型...")
-        model = build(strategy, scaled_data, ticker_symbol)
-
+    X_train, y_train, X_test, y_test = prepare_data(scaled_data)  # Here's the change
+    model = load_and_build_models(strategy, scaled_data, ticker_symbol, X_train, y_train, X_test, y_test)
+    
     # 增量訓練
     print("正在使用最新資料增量訓練...")
-    incremental_training(scaled_data, scaler, ticker_symbol, strategy)
+    model = incremental_training(scaled_data, ticker_symbol, strategy)
     print("增量訓練完成")
+
+    gru_predictions = model.predict(scaled_data[-500:].reshape(1, 500, -1)).flatten()
+    gru_predictions = inverse_scale_predictions(gru_predictions, scaled_data.shape, scaler)
     
-    # 重新載入已訓練的GRU和隨機森林模型以進行預測
-    print("載入已增量訓練的LSTM/GRU模型...")
-    model = tf.keras.models.load_model(model_path)
-    
-    print("正在預測...")
-    # GRU模型的預測
-    gru_predictions = predict(model, scaled_data, scaler, df)
-    # 將GRU的預測結果添加到df中
-    for i in range(15):
-        df[f"GRU_Prediction_Day_{i+1}"] = gru_predictions[i]
-    
-    # 印出五天的預測值
-    for day, value in enumerate(gru_predictions[:5], 1):  # 從1開始數
-        print(f"Day {day} Predicted Close Price: {value:.2f}")
-    
-    # 繪製隨機森林的預測
     plot_predictions(ticker_symbol, df, gru_predictions)
+
+    # Asking the user if they want to show the accuracy visualization
+    show_accuracy_visualization_option = True
+    
+    if show_accuracy_visualization_option:
+        plot_accuracy_visualization(ticker_symbol, df, model, scaled_data, scaler)
 
 if __name__ == "__main__":
     main()
