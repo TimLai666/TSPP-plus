@@ -1,21 +1,23 @@
 #v4
 
-import tensorflow as tf
-import matplotlib.pyplot as plt
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import GRU, Dropout, Dense, LSTM
-from tensorflow.keras.optimizers import Nadam
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import GRU, Dropout, Dense, LSTM, Conv1D, MaxPooling1D
 from tensorflow.keras.callbacks import ReduceLROnPlateau
+from tensorflow.keras.layers import LeakyReLU
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
+import tensorflow as tf
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import datetime
 import os
 
+
 dir_path = 'saved_models_v4/'
-old_dir = ['saved_models_v3.5']
+old_dir = []
 
 def get_data_with_indicators(ticker):
     df = get_data(ticker)
@@ -120,20 +122,6 @@ def normalization(df):
     
     return scaled_data, scaler
 
-def inverse_scale_predictions(predictions, original_shape, scaler):
-    """Inverse scale the predictions."""
-    # Create a dummy array with the same shape as the original data
-    dummy_array = np.zeros(shape=original_shape)
-    
-    # Fill the predictions into the correct position of the dummy array (here, the Close prices)
-    dummy_array[:len(predictions), 3] = predictions
-    
-    # Inverse transform using the scaler
-    inverted_array = scaler.inverse_transform(dummy_array)
-    
-    # Return the inverse-transformed predictions
-    return inverted_array[:len(predictions), 3]
-
 def prepare_data(scaled_data, input_length=500, output_length=15):
     X = []
     y = []
@@ -167,6 +155,11 @@ def load_and_build_models(strategy, scaled_data, ticker_symbol, X_train, y_train
     if os.path.exists(model_path):
         print("載入已訓練的LSTM/GRU模型...")
         model = tf.keras.models.load_model(model_path)
+
+        # 增量訓練
+        print("正在使用最新資料增量訓練...")
+        model = incremental_training(scaled_data, ticker_symbol, strategy)
+        print("增量訓練完成")
     else:
         print("建立新LSTM/GRU模型...")
         model = build(strategy, X_train, y_train, X_test, y_test, ticker_symbol)
@@ -179,41 +172,36 @@ def build(strategy, X_train, y_train, X_test, y_test, ticker_symbol):
         input_dim = X_train.shape[2]
 
         model = Sequential()
-        model.add(LSTM(1024, return_sequences=True, input_shape=(input_length, input_dim)))
-        model.add(Dropout(0.2))
 
-        model.add(GRU(620))
-        model.add(Dropout(0.5))
+        # LSTM layer
+        model.add(LSTM(195, input_shape=(input_length, input_dim),return_sequences=True))
+        model.add(Dropout(0.1))
+
+        # GRU layer
+        model.add(GRU(192))
+        model.add(Dropout(0.4))
+       
+        # Output Dense layer
         model.add(Dense(15, activation='linear'))  # Directly predicting closing prices
 
-        nadam_optimizer = Nadam(learning_rate=0.001, beta_1=0.9, beta_2=0.999)
-        model.compile(optimizer=nadam_optimizer, loss='mse')  # Using Mean Squared Error as the loss function
+        Adam_optimizer = Adam(learning_rate=0.01, beta_1=0.82, beta_2=0.983)
+        model.compile(optimizer=Adam_optimizer, loss='mse')  # Changing to Mean Squared Error
 
-        reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=0.00001)
-        train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).shuffle(len(X_train)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-        val_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(128).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+        train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).shuffle(len(X_train)).batch(101).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+        val_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(101).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+        
         early_stopping = EarlyStopping(patience=5, restore_best_weights=True)
-        model.fit(train_dataset, epochs=300, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
+        
+        model.fit(train_dataset, epochs=10000, validation_data=val_dataset, callbacks=[early_stopping])
 
         model_path = os.path.join(dir_path, ticker_symbol)
         model_path = os.path.abspath(model_path)
         model.save(model_path)
+        
         return model
 
-def make_predictions(model, scaled_data, scaler):
-    print("正在預測...")
-    
-    # GRU模型的預測
-    x_latest = scaled_data[-500:]
-    x_latest = np.array([x_latest])
-    scaled_predictions = model.predict(x_latest)
-    
-    # Decoding GRU predictions using the inverse_scale_predictions function
-    gru_predictions = inverse_scale_predictions(scaled_predictions[0], scaled_data.shape, scaler)
-
-    return gru_predictions
-
 def predict(model, scaled_data, scaler, df):
+    print("正在預測...")
     # GRU model predictions
     x_latest = scaled_data[-500:]
     x_latest = np.array([x_latest])
@@ -250,7 +238,76 @@ def plot_predictions(ticker_symbol, df, gru_predictions):
     plt.legend()
     plt.show()
 
+def incremental_training(scaled_data, ticker_symbol, strategy):
+    with strategy.scope():
+        # GRU模型的增量訓練
+        model_path = os.path.join(dir_path, ticker_symbol)
+        if os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path)
+        else:
+            raise ValueError("LSTM/GRU Model not found!")
+
+        input_length = 500  # 使用過去500天的數據
+
+        # 使用最新的500天數據
+        start_index = len(scaled_data) - input_length - 1
+        X = []
+        y = []
+
+        for i in range(start_index, len(scaled_data) - input_length):
+            X.append(scaled_data[i:i + input_length, :])
+            y.append(scaled_data[i + input_length, 3])  # 只預測下一天的收盤價
+
+        X, y = np.array(X), np.array(y)
+
+        # 使用模型訓練
+        train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(101).prefetch(
+            buffer_size=tf.data.experimental.AUTOTUNE)
+
+        # 使用較低的學習率
+        # 使用Adam優化器
+        Adam_optimizer = Adam(learning_rate=0.00001, beta_1=0.85, beta_2=0.965)
+        model.compile(optimizer=Adam_optimizer, loss='mse')
+
+        model.fit(train_dataset, epochs=10)
+
+        # 儲存GRU模型
+        model_path = os.path.join(dir_path, ticker_symbol)
+        model.save(model_path)
+        
+    return model
+
+def make_predictions(model, scaled_data, scaler):
+    '''測試用函數'''
+    
+    # GRU模型的預測
+    x_latest = scaled_data[-500:]
+    x_latest = np.array([x_latest])
+    scaled_predictions = model.predict(x_latest)
+    
+    # Decoding GRU predictions using the inverse_scale_predictions function
+    gru_predictions = inverse_scale_predictions(scaled_predictions[0], scaled_data.shape, scaler)
+
+    return gru_predictions
+
+def inverse_scale_predictions(predictions, original_shape, scaler):
+    '''測試用函數'''
+    """Inverse scale the predictions."""
+    # Create a dummy array with the same shape as the original data
+    dummy_array = np.zeros(shape=original_shape)
+    
+    # Fill the predictions into the correct position of the dummy array (here, the Close prices)
+    dummy_array[:len(predictions), 3] = predictions
+    
+    # Inverse transform using the scaler
+    inverted_array = scaler.inverse_transform(dummy_array)
+    
+    # Return the inverse-transformed predictions
+    return inverted_array[:len(predictions), 3]
+
+
 def plot_accuracy_visualization(ticker_symbol, df, model, scaled_data, scaler, days_to_show=100):
+    '''測試用函數'''
 
     start_index = len(scaled_data) - 500 - days_to_show  # Starting from 500 days before the end of the days_to_show
     actual_prices = []
@@ -279,45 +336,6 @@ def plot_accuracy_visualization(ticker_symbol, df, model, scaled_data, scaler, d
     plt.legend()
     plt.show()
 
-def incremental_training(scaled_data, ticker_symbol, strategy):
-    with strategy.scope():
-        # GRU模型的增量訓練
-        model_path = os.path.join(dir_path, ticker_symbol)
-        if os.path.exists(model_path):
-            model = tf.keras.models.load_model(model_path)
-        else:
-            raise ValueError("LSTM/GRU Model not found!")
-
-        input_length = 500  # 使用過去500天的數據
-
-        # 使用最新的500天數據
-        start_index = len(scaled_data) - input_length - 1
-        X = []
-        y = []
-
-        for i in range(start_index, len(scaled_data) - input_length):
-            X.append(scaled_data[i:i + input_length, :])
-            y.append(scaled_data[i + input_length, 3])  # 只預測下一天的收盤價
-
-        X, y = np.array(X), np.array(y)
-
-        # 使用模型訓練
-        train_dataset = tf.data.Dataset.from_tensor_slices((X, y)).batch(128).prefetch(
-            buffer_size=tf.data.experimental.AUTOTUNE)
-
-        # 使用較低的學習率
-        # 使用Nadam優化器
-        nadam_optimizer = Nadam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999)
-        model.compile(optimizer=nadam_optimizer, loss='mse')
-
-        model.fit(train_dataset, epochs=10)
-
-        # 儲存GRU模型
-        model_path = os.path.join(dir_path, ticker_symbol)
-        model.save(model_path)
-        
-    return model
-        
 def main():
     strategy = tf.distribute.MirroredStrategy()
     print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
@@ -338,14 +356,8 @@ def main():
     X_train, y_train, X_test, y_test = prepare_data(scaled_data)  # Here's the change
     model = load_and_build_models(strategy, scaled_data, ticker_symbol, X_train, y_train, X_test, y_test)
     
-    # 增量訓練
-    print("正在使用最新資料增量訓練...")
-    model = incremental_training(scaled_data, ticker_symbol, strategy)
-    print("增量訓練完成")
+    gru_predictions =predict(model, scaled_data, scaler, df)
 
-    gru_predictions = model.predict(scaled_data[-500:].reshape(1, 500, -1)).flatten()
-    gru_predictions = inverse_scale_predictions(gru_predictions, scaled_data.shape, scaler)
-    
     plot_predictions(ticker_symbol, df, gru_predictions)
 
     # Asking the user if they want to show the accuracy visualization
