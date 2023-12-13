@@ -8,6 +8,9 @@ import process_data, load_and_train_models, predict, testing
 dir_path = 'saved_models_v4/'
 old_dir = []
 
+# Asking the user if they want to show the accuracy visualization
+show_accuracy_visualization_option = False
+
 def main():
     strategy = tf.distribute.MirroredStrategy()
     print(f"Number of GPUs: {strategy.num_replicas_in_sync}")
@@ -37,9 +40,6 @@ def main():
 
     predict.plot_predictions(ticker_symbol, df, predictions)
 
-    # Asking the user if they want to show the accuracy visualization
-    show_accuracy_visualization_option = True
-    
     if show_accuracy_visualization_option:
         testing.plot_accuracy_visualization(ticker_symbol, df, model, scaled_data, scaler)
 
