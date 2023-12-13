@@ -21,13 +21,18 @@ def main():
         os.makedirs(dir_path)
 
     # 設定ETF代碼
-    ticker_symbol = str(input("輸入要預測的股票代碼："))
-    ticker = ticker_symbol + ".TW"
-    df = process_data.get_data_with_indicators(ticker)
-    scaled_data, scaler = process_data.normalization(df)
-    X_train, y_train, X_test, y_test = process_data.prepare_data(scaled_data)  # Here's the change
-    model = load_and_train_models.load_and_build_models(dir_path, strategy, scaled_data, ticker_symbol, X_train, y_train, X_test, y_test)
-    
+    while True:
+        ticker_symbol = str(input("輸入要預測的股票代碼："))
+        ticker = ticker_symbol + ".TW"
+        try:
+            df = process_data.get_data_with_indicators(ticker)
+            scaled_data, scaler = process_data.normalization(df)
+            X_train, y_train, X_test, y_test = process_data.prepare_data(scaled_data)  # Here's the change
+            model = load_and_train_models.load_and_build_models(dir_path, strategy, scaled_data, ticker_symbol, X_train, y_train, X_test, y_test)
+            break
+        except:
+            print("錯誤，請重試或換一支股票")
+
     predictions = predict.predict(model, scaled_data, scaler, df)
 
     predict.plot_predictions(ticker_symbol, df, predictions)
