@@ -1,7 +1,7 @@
 # TSPP+ (Taiwan Stock Price Predictor Plus) 台股預言家
 贊助我：[PayPal](https://www.paypal.me/tingzhen666)
 ![DALL·E 2023-11-05 21 04 38 - Modify the logo design to feature a warm color scheme while maintaining the existing sleek, young, and high-tech aesthetic  Incorporate elements of th拷貝](https://github.com/TimLai666/TSPP-plus/assets/43640816/42ecbd35-dec2-461e-9309-2e346225bb74)
-#### 使用深度學習模型預測未來四十五天股價
+### 使用深度學習模型預測未來四十五天股價
 輸入股票代號後，若無對應模型會自動建立一個，若有則載入模型<br>
 程式會預測未來45天的股票收盤價，並以圖表呈現<br>
 預測完成後會進行增量學習，提高精準度，理論上會越用越準（v4.0版本暫時取消此功能）
