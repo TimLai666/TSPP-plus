@@ -1,6 +1,6 @@
 # TSPP+ (Taiwan Stock Price Predictor Plus) 台股預言家
 ### 贊助我：[PayPal](https://www.paypal.me/tingzhen666)<br>
-### [使用說明](https://support.hazelnut-paradise.com/main.php?category=TSPP%2B+%E5%8F%B0%E8%82%A1%E9%A0%90%E8%A8%80%E5%AE%B6)
+### [查看使用說明](https://support.hazelnut-paradise.com/main.php?category=TSPP%2B+%E5%8F%B0%E8%82%A1%E9%A0%90%E8%A8%80%E5%AE%B6)
 ### 歡迎使用 [TSPP+ 網頁版](https://apps.hazelnut-paradise.com/TSPP-plus/)
 ---
 <img style="height:300px" src="https://github.com/TimLai666/TSPP-plus/assets/43640816/42ecbd35-dec2-461e-9309-2e346225bb74"><br>
